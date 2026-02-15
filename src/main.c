@@ -6,12 +6,20 @@
 #include <math.h>
 #include "tinyexpr.h"
 
+/*
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 800
 #define SCREEN_ORIGIN_X (SCREEN_WIDTH / 2)
 #define SCREEN_ORIGIN_Y (SCREEN_HEIGHT / 2)
+*/
+
 #define WINDOW_TITLE "Function Plotter" 
-#define FONT_PATH "assets/JetBrainsMono-Bold.ttf" 
+#define FONT_PATH "assets/Roboto-Bold.ttf" 
+
+int SCREEN_WIDTH = 800;
+int SCREEN_HEIGHT = 800;
+int SCREEN_ORIGIN_X = 400;
+int SCREEN_ORIGIN_Y = 400;
 
 typedef struct {
     float x;
@@ -27,7 +35,7 @@ typedef struct {
     SDL_Rect rect;
 } Text;
 
-void pollInput(SDL_Event* event, bool* running, bool* zoomChanged, bool* mouseClicked, Camera* cam, char* buffer);
+void pollInput(SDL_Event* event, SDL_Window* window, bool* running,  bool* zoomChanged, bool* mouseClicked, Camera* cam, char* buffer);
 void freeTextSurfaceAndTexture(SDL_Renderer* renderer, TTF_Font* font, Text* text);
 int worldToScreenX(Camera* cam, float wx);
 int worldToScreenY(Camera* cam, float wy);
@@ -36,8 +44,9 @@ double screenToWorldY(Camera* cam, int sy);
 void cleanupSDL(SDL_Window* window, SDL_Renderer* renderer, Text* zoomText, Text* exprText, Text* mouseText);
 int initSDL(SDL_Window** window, SDL_Renderer** renderer);
 void drawAxes(SDL_Renderer* renderer, Camera* camera);
+void renderIndicators(SDL_Renderer* renderer, Camera* camera, TTF_Font* font);
 int plotFunction(SDL_Renderer* renderer, Camera* camera, char* strExpr, SDL_Color* functionColor);
-
+void removeTrailingZeroes(char* str);
 
 int main(int argc, char** argv) {
 
@@ -87,17 +96,17 @@ int main(int argc, char** argv) {
 
     Text zoomText, exprText, mouseText;
 
-    snprintf(zoomText.buffer, sizeof(zoomText.buffer), "Zoom: %f", camera.zoom);
+    snprintf(zoomText.buffer, sizeof(zoomText.buffer), "Zoom: %.2f", camera.zoom);
     zoomText.color = (SDL_Color){0, 0, 0, 255};
     zoomText.surface = TTF_RenderText_Solid(font, zoomText.buffer, zoomText.color);
     zoomText.texture = SDL_CreateTextureFromSurface(renderer, zoomText.surface);
-    zoomText.rect = (SDL_Rect){0, 0, 200, 50};
+    zoomText.rect = (SDL_Rect){25, 25, zoomText.surface->w, zoomText.surface->h};
 
     snprintf(exprText.buffer, sizeof(zoomText.buffer), "f(x) = %s", argv[1]);
     exprText.color = (SDL_Color){0, 0, 0, 255};
     exprText.surface = TTF_RenderText_Solid(font, exprText.buffer, exprText.color);
     exprText.texture = SDL_CreateTextureFromSurface(renderer, exprText.surface);
-    exprText.rect = (SDL_Rect){0, 50, 200, 50};
+    exprText.rect = (SDL_Rect){25, 75, exprText.surface->w, exprText.surface->h};
 
     mouseText.color = (SDL_Color){0, 0, 0, 255};
     mouseText.surface = TTF_RenderText_Solid(font, mouseText.buffer, mouseText.color);
@@ -106,28 +115,16 @@ int main(int argc, char** argv) {
     printf("Starting function plotter...\n");
 
     int smx, smy;
-    int prev_smx, prev_smy;
 
     while (running) {
         SDL_GetMouseState(&smx, &smy);
 
-        if (prev_smx != smx || prev_smy != smy) {
-            snprintf(mouseText.buffer, sizeof(mouseText.buffer), "  (%f, %f)", screenToWorldX(&camera, smx), screenToWorldY(&camera, smy) * -1);
-            freeTextSurfaceAndTexture(renderer, font, &mouseText);
-            prev_smx = smx;
-            prev_smy = smy;
-        }
+        mouseText.rect = (SDL_Rect){smx, smy, mouseText.surface->w, mouseText.surface->h};
 
-        mouseText.rect = (SDL_Rect){smx, smy, 300, 25};
-
-        pollInput(&event, &running, &zoomChanged, &mouseClicked, &camera, zoomText.buffer);
+        pollInput(&event, window, &running, &zoomChanged, &mouseClicked, &camera, zoomText.buffer);
 
         if (zoomChanged) {
             freeTextSurfaceAndTexture(renderer, font, &zoomText);
-
-            snprintf(mouseText.buffer, sizeof(mouseText.buffer), "  (%f, %f)", screenToWorldX(&camera, smx), screenToWorldY(&camera, smy) * -1);
-            freeTextSurfaceAndTexture(renderer, font, &mouseText);
-        
             zoomChanged = false;
         }
 
@@ -135,10 +132,16 @@ int main(int argc, char** argv) {
             double x = screenToWorldX(&camera, smx);
             te_variable vars[] = {{"x", &x}};
             te_expr* expression = te_compile(argv[1], vars, 1, 0);
-            snprintf(mouseText.buffer, sizeof(mouseText.buffer), "  For X = %f, Y = %f", x, te_eval(expression));
-            freeTextSurfaceAndTexture(renderer, font, &mouseText);
-        } else {
-            snprintf(mouseText.buffer, sizeof(mouseText.buffer), "  (%f, %f)", screenToWorldX(&camera, smx), screenToWorldY(&camera, smy) * -1);
+
+            char strX[32];
+            char strY[32];
+            snprintf(strX, sizeof(strX), "%.2f", x);
+            snprintf(strY, sizeof(strY), "%.2f", te_eval(expression));
+            removeTrailingZeroes(strX);
+            removeTrailingZeroes(strY);
+
+            snprintf(mouseText.buffer, sizeof(mouseText.buffer), "(%s, %s)", strX, strY);
+
             freeTextSurfaceAndTexture(renderer, font, &mouseText);
         }
 
@@ -146,6 +149,7 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
 
         drawAxes(renderer, &camera);
+
         if (plotFunction(renderer, &camera, argv[1], &functionColor) == EXIT_FAILURE) {
             fprintf(stderr, "Received exit failure while plotting function, exiting...\n");
             return EXIT_FAILURE;
@@ -153,7 +157,9 @@ int main(int argc, char** argv) {
 
         SDL_RenderCopy(renderer, zoomText.texture, NULL, &zoomText.rect);
         SDL_RenderCopy(renderer, exprText.texture, NULL, &exprText.rect);
-        SDL_RenderCopy(renderer, mouseText.texture, NULL, &mouseText.rect);
+        if (mouseClicked) SDL_RenderCopy(renderer, mouseText.texture, NULL, &mouseText.rect);
+
+        renderIndicators(renderer, &camera, font);
 
         SDL_RenderPresent(renderer);
     }   
@@ -163,6 +169,98 @@ int main(int argc, char** argv) {
     cleanupSDL(window, renderer, &zoomText, &exprText, &mouseText);
 
     return EXIT_SUCCESS;
+}
+
+void removeTrailingZeroes(char* str) {
+    char* p = str + strlen(str) - 1; // Last character
+    while (p > str && *p == '0') { // Loop through the text, from the last character, checking if the pointer points to a zero character
+        *p-- = '\0'; // Set the 0 character to a null terminator
+    }
+    if (*p == '.') { // After removing trailing zeros, remove the decimal point
+        *p = '\0';
+    }
+}
+
+void renderIndicators(SDL_Renderer* renderer, Camera* camera, TTF_Font* font) {
+    float worldLeft = camera->x - SCREEN_ORIGIN_X / camera->zoom;
+    float worldRight = camera->x + SCREEN_ORIGIN_X / camera->zoom;
+    float worldTop = camera->y - SCREEN_ORIGIN_Y / camera->zoom;
+    float worldBottom = camera->y + SCREEN_ORIGIN_Y / camera->zoom;
+
+    float gridStep = 100.0f / camera->zoom; 
+
+    float pow10 = powf(10, floorf(log10f(gridStep)));
+    float normalized = gridStep / pow10;
+
+    if (normalized < 2.0f) gridStep = 1.0f * pow10;
+    else if (normalized < 5.0f) gridStep = 2.0f * pow10;
+    else gridStep = 5.0f * pow10;
+
+    float startX = floorf(worldLeft / gridStep) * gridStep; 
+    float startY = floorf(worldTop / gridStep) * gridStep;
+
+    int textW, textH, sampleW, sampleH;
+
+    float pixelStep = gridStep * camera->zoom; // Pixels in between grid axes
+
+    char sample[32];
+    snprintf(sample, sizeof(sample), "%.1f", worldRight);
+
+    TTF_SizeText(font, sample, &sampleW, &sampleH);
+
+    int XlabelInterval = 1;
+    if (pixelStep < sampleW * 1.5f) { // Needed space is 150% normal width of text, compare with pixel space. If our needed space exceeds the distance, establish an interval to draw the labels.
+        XlabelInterval = (int)ceilf((sampleW * 1.5f) / pixelStep);
+    }
+
+    // e.g:
+    // needed size = 90px
+    // pixel step = 30px
+    // interval = 90 / 30 = 3
+    // index == 0 > draw || index == 3 > draw || index == 6 > draw || ...
+    // pixel steps adds up like 30 + 30 + 30 in between labels, meaning we'll have enough size to draw after 3 pixel steps.
+    // draw one label every 3 grid lines
+
+    int index = 0;
+    for (float x = startX; x <= worldRight; x += gridStep, index++) {
+        if (index % XlabelInterval != 0) continue; 
+        Text indicatorText;
+        snprintf(indicatorText.buffer, sizeof(indicatorText.buffer), "%.1f", x);
+        removeTrailingZeroes(indicatorText.buffer);
+
+        indicatorText.color = (SDL_Color){0, 0, 0, 255};
+        indicatorText.surface = TTF_RenderText_Solid(font, indicatorText.buffer, indicatorText.color);
+        indicatorText.texture = SDL_CreateTextureFromSurface(renderer, indicatorText.surface);
+        textW = indicatorText.surface->w;
+        textH = indicatorText.surface->h;
+        indicatorText.rect = (SDL_Rect){worldToScreenX(camera, x) - textW / 2, worldToScreenY(camera, 0), textW, textH};
+        SDL_RenderCopy(renderer, indicatorText.texture, NULL, &indicatorText.rect);
+        SDL_FreeSurface(indicatorText.surface);
+        SDL_DestroyTexture(indicatorText.texture);
+    }
+
+    int YlabelInterval = 1;
+    if (pixelStep < sampleH * 1.5f) { // Needed space is 150% normal width of text, compare with pixel space. If our needed space exceeds the distance, establish an interval to draw the labels.
+        YlabelInterval = (int)ceilf((sampleH * 1.5f) / pixelStep);
+    }
+
+    index = 0;
+    for (float y = startY; y <= worldBottom; y += gridStep, index++) {
+        if (index % YlabelInterval != 0) continue; 
+        Text indicatorText;
+        snprintf(indicatorText.buffer, sizeof(indicatorText.buffer), "%.1f", y);
+        removeTrailingZeroes(indicatorText.buffer);
+
+        indicatorText.color = (SDL_Color){0, 0, 0, 255};
+        indicatorText.surface = TTF_RenderText_Solid(font, indicatorText.buffer, indicatorText.color);
+        indicatorText.texture = SDL_CreateTextureFromSurface(renderer, indicatorText.surface);
+        textW = indicatorText.surface->w;
+        textH = indicatorText.surface->h;
+        indicatorText.rect = (SDL_Rect){worldToScreenX(camera, 0), worldToScreenY(camera, y) - textH / 2, textW, textH};
+        SDL_RenderCopy(renderer, indicatorText.texture, NULL, &indicatorText.rect);
+        SDL_FreeSurface(indicatorText.surface);
+        SDL_DestroyTexture(indicatorText.texture);
+    }
 }
 
 void freeTextSurfaceAndTexture(SDL_Renderer* renderer, TTF_Font* font, Text* text) {
@@ -180,7 +278,13 @@ void drawAxes(SDL_Renderer* renderer, Camera* camera) {
     float worldBottom = camera->y + SCREEN_ORIGIN_Y / camera->zoom;
 
     float gridStep = 100.0f / camera->zoom; 
-    gridStep = roundf(gridStep / 5.0f) * 5.0f;
+
+    float pow10 = powf(10, floorf(log10f(gridStep)));
+    float normalized = gridStep / pow10;
+
+    if (normalized < 2.0f) gridStep = 1.0f * pow10;
+    else if (normalized < 5.0f) gridStep = 2.0f * pow10;
+    else gridStep = 5.0f * pow10;
 
     float startX = floorf(worldLeft / gridStep) * gridStep; 
     float startY = floorf(worldTop / gridStep) * gridStep;
@@ -272,7 +376,7 @@ int initSDL(SDL_Window** window, SDL_Renderer** renderer) {
         return EXIT_FAILURE;
     }
 
-    *window = SDL_CreateWindow(WINDOW_TITLE, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
+    *window = SDL_CreateWindow(WINDOW_TITLE, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!*window) {
         fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         return EXIT_FAILURE;
@@ -306,9 +410,23 @@ void cleanupSDL(SDL_Window* window, SDL_Renderer* renderer, Text* zoomText, Text
     SDL_Quit();
 }
 
-void pollInput(SDL_Event* event, bool* running, bool* zoomChanged, bool* mouseClicked, Camera* cam, char* buffer) {
+
+void pollInput(SDL_Event* event, SDL_Window* window, bool* running, bool* zoomChanged, bool* mouseClicked, Camera* cam, char* buffer) {
+    float move = 10 / cam->zoom;
     while (SDL_PollEvent(event)) {
         switch ((*event).type) {
+            case SDL_WINDOWEVENT: {
+                if ((*event).window.event == SDL_WINDOWEVENT_RESIZED) {
+                    printf("Resizing window...\n");
+                    int newWidth, newHeight;
+                    SDL_GetWindowSize(window, &newWidth, &newHeight);
+                    SCREEN_WIDTH = newWidth;
+                    SCREEN_HEIGHT = newHeight;
+                    SCREEN_ORIGIN_X = newWidth / 2;
+                    SCREEN_ORIGIN_Y = newHeight / 2;
+                }
+                break;
+            }
             case SDL_QUIT: {
                 *running = false;
                 break;
@@ -323,16 +441,32 @@ void pollInput(SDL_Event* event, bool* running, bool* zoomChanged, bool* mouseCl
                         cam->zoom += 10.0f;
                         cam->zoom = roundf(cam->zoom);
                         if (cam->zoom > 1000.0f) cam->zoom = 1000.0f;
-                        snprintf(buffer, 128, "Zoom: %f", cam->zoom);
+                        snprintf(buffer, 128, "Zoom: %.2f", cam->zoom);
                         *zoomChanged = true;
                         break;
                     }
                     case SDLK_DOWN: {
                         cam->zoom -= 10.0f;
                         cam->zoom = roundf(cam->zoom);
-                        if (cam->zoom < 0.1f) cam->zoom = 0.1f;
-                        snprintf(buffer, 128, "Zoom: %f", cam->zoom);
+                        if (cam->zoom < 0.01f) cam->zoom = 0.01f;
+                        snprintf(buffer, 128, "Zoom: %.2f", cam->zoom);
                         *zoomChanged = true;
+                        break;
+                    }
+                    case SDLK_a: {
+                        cam->x -= move;
+                        break;
+                    }
+                    case SDLK_d: {
+                        cam->x += move;
+                        break;
+                    }
+                    case SDLK_w: {
+                        cam->y -= move;
+                        break;
+                    }
+                    case SDLK_s: {
+                        cam->y += move;
                         break;
                     }
                     default: {
@@ -353,12 +487,12 @@ void pollInput(SDL_Event* event, bool* running, bool* zoomChanged, bool* mouseCl
                 if (event->wheel.y > 0) {
                     cam->zoom *= 1.1f;
                     if (cam->zoom > 1000.0f) cam->zoom = 1000.0f;
-                    snprintf(buffer, 128, "Zoom: %f", cam->zoom);
+                    snprintf(buffer, 128, "Zoom: %.2f", cam->zoom);
                     *zoomChanged = true;
                 } else if (event->wheel.y < 0) {
                     cam->zoom *= 0.9f;
-                    if (cam->zoom < 0.1f) cam->zoom = 0.1f;
-                    snprintf(buffer, 128, "Zoom: %f", cam->zoom);
+                    if (cam->zoom < 0.01f) cam->zoom = 0.01f;
+                    snprintf(buffer, 128, "Zoom: %.2f", cam->zoom);
                     *zoomChanged = true;
                 } 
                 break;
