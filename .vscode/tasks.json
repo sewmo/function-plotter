@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build SDL2",
+            "type": "shell",
+            "command": "gcc",
+            "args": [
+                "-std=c17",
+                "-mconsole",
+                "-IC:/libs/SDL2/x86_64-w64-mingw32/include",
+                "src/main.c",
+                "src/tinyexpr.c",
+                "-LC:/libs/SDL2/x86_64-w64-mingw32/lib",
+                "-lmingw32",
+                "-lSDL2main",
+                "-lSDL2_ttf",
+                "-lSDL2",
+                "-lm",
+                "-o",
+                "plot.exe"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        }
+    ]
+}
