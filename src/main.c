@@ -248,7 +248,7 @@ void renderIndicators(SDL_Renderer* renderer, Camera* camera, TTF_Font* font) {
     for (float y = startY; y <= worldBottom; y += gridStep, index++) {
         if (index % YlabelInterval != 0) continue; 
         Text indicatorText;
-        snprintf(indicatorText.buffer, sizeof(indicatorText.buffer), "%.1f", y);
+        snprintf(indicatorText.buffer, sizeof(indicatorText.buffer), "%.1f", y * -1);
         removeTrailingZeroes(indicatorText.buffer);
 
         indicatorText.color = (SDL_Color){0, 0, 0, 255};
@@ -412,7 +412,7 @@ void cleanupSDL(SDL_Window* window, SDL_Renderer* renderer, Text* zoomText, Text
 
 
 void pollInput(SDL_Event* event, SDL_Window* window, bool* running, bool* zoomChanged, bool* mouseClicked, Camera* cam, char* buffer) {
-    float move = 10 / cam->zoom;
+    float move = 50 / cam->zoom;
     while (SDL_PollEvent(event)) {
         switch ((*event).type) {
             case SDL_WINDOWEVENT: {
